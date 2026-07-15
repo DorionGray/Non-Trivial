@@ -1,86 +1,88 @@
 import numpy as np
-from kneed import KneeLocator
-from scipy.integrate import odeint, trapezoid
+from scipy.integrate import *
 import matplotlib.pyplot as plt
 import oapackage
+from kneed import KneeLocator
 
-k = 0.000501
-v = 0.0014
-epson = 0.0667  # Probability of de novo resistance development
-gamma = 0.0001  # Rate of natural recovery
-gamma_a = 0.086  # Rate of recovery with antibiotics (sensitive only)
-mu = 0.0035  # Mortality rate due to disease
-alpha = 0.5  # Fitness cost of resistance
-average_expenditure = 0.0071  # Maintenance cost per animal per day (€)
-antibiotic_cost = 0.0019  # Antibiotic cost per animal per day (€)
-W = 2.404  # Average weight of a healthy chicken (kg)
-P = 0.83  # Price per kg of final chicken (€)
-WlossR = 0.02  # Weight loss fraction – resistant infected
-WlossI = 0.112  # Weight loss fraction – sensitive infected
-p = 0.02  # Cumulative mortality threshold for treatment
-day_max = 35  # Latest day treatment can be triggered
-I0_relative = 0.058  # Initial infection prevalence
-A = 1996.4  # Farm area
+kv = 0.2
+epson = 0.125 # The probability of de novo resistance development
+gamma = 0.143 # The rate of normal recovery
+gamma_a = 0.715 # The rate of recovery with antibiotics (only works in sensitive strains)
+mu = 0.00886 # Rate of mortality due to disease
+alpha = 0.36 # Fitness cost
+average_expenditure = 2.42 # Cost of maintenance animals per day per animal
+antibiotic_cost = 0.074 # cost of antibiotic per day per chicken
+W = 18.14 # Average weight of a healthy weaner
+P = 6.08 #Price per kg of final chicken
+WlossR = 0.0833
+WlossI = 0.189
+p = 0.008
+day_max = 31
+IS0_relative = 0.162
+IR0_relative = 0.018
+density_min = 0.5
+density_max = 2.85
+A = 874.12 #Average size of farm in square meters
 
-densities = np.linspace(5, 25, 1000)
-t = np.linspace(1, 42, 1000)
+densities = np.linspace(density_min, density_max, 1000)
+t = np.linspace(0,35,1000)
 
-FR_all = []
-Rev_all = []
+xplot = np.array([])
+yplot = np.array([])
 
+y_revenue = np.array([])
+yrev_norm = np.array([])
+yamr_norm = np.array([])
+y_final = np.array([])
 for density in densities:
-    S0 = density * A - (density * A * I0_relative)
-    IS0 = density * A * I0_relative
-    IR0 = R0 = D0 = 0
-    N0 = S0 + IS0
+    # Initial State Values
+    S0 = density * A -  (density * A * (IS0_relative + IR0_relative))
+    IS0 = density * A * IS0_relative
+    IR0 = IR0_relative * density * A
+    R0 = 0
+    D0 = 0
+    N0 = S0 + IS0 + IR0 + R0 + D0
 
 
-    def SIR_MODEL(y, t, k, v, gamma, gamma_a, mu, alpha, epson):
-        S, IS, IR, R, D, N = y
-        beta = k * density * v
-        beta_R = k * v * density * (1 - alpha)
-        lam_S = beta * IS
-        lam_R = beta_R * IR
-        treat = (D / N0 >= p) and (t <= day_max)
-        dS = -(lam_S + lam_R) * S
-        if treat:
-            dIS = lam_S * S - (gamma_a + mu + epson) * IS
-            dIR = epson * IS + lam_R * S - (gamma + mu) * IR
+    def SIR_MODEL(y,t, kv, gamma,gamma_a, mu, alpha, epson):
+        S, IS, IR, R, D,N = y
+        lambda_S = kv * IS / A
+        lambda_R = kv * IR * (1 - alpha) / A
+        treatment = (D / N0 >= p and day_max >= t)
+        dS = -(lambda_S + lambda_R) * S
+
+        if treatment:
+            dIS = lambda_S * S - (gamma_a + mu + epson) * IS
+            dIR = epson * IS + lambda_R * S - (gamma + mu) * IR
             dR = gamma * IR + gamma_a * IS
         else:
-            dIS = lam_S * S - (gamma + mu) * IS
-            dIR = lam_R * S - (gamma + mu) * IR
+            dIS = lambda_S * S - (gamma + mu) * IS
+            dIR = lambda_R * S - (gamma + mu) * IR
             dR = gamma * (IS + IR)
         dD = mu * (IS + IR)
-        dN = -dD
+        dN = -mu * (IS + IR)
         return [dS, dIS, dIR, dR, dD, dN]
 
+    result = odeint(SIR_MODEL, y0=[S0, IS0, IR0, R0, D0, N0], t= t, args=(kv, gamma, gamma_a, mu, alpha, epson), tcrit=[day_max], mxstep=5000)
 
-    res = odeint(SIR_MODEL, y0=[S0, IS0, IR0, R0, D0, N0], t=t, args=(k, v, gamma, gamma_a, mu, alpha, epson))
-    S, IS, IR, R, D, N = res.T
-
-    antibiotic_active = (D / N0 > p) & (t <= day_max)
+    S, IS, IR, R, D, N = result.T
+    antibiotic_active = (D/N0 > p) & (day_max >= t)
     gross_revenue = N[-1] * P * W
-    weight_loss = (WlossI * (IS[-1] + IR[-1]) + WlossR * R[-1]) * W
+    weight_loss = WlossI * (IS[-1] + IR[-1]) * W + WlossR * W * R[-1]
     maintenance = trapezoid(N, t) * average_expenditure
     antibiotic = trapezoid(N * antibiotic_active, t) * antibiotic_cost
     Revenue = gross_revenue - weight_loss * P - maintenance - antibiotic
-
-    denom = IR[-1] + IS[-1]
+    xplot = np.append(xplot, density)
     FR = (trapezoid(IR, t)/ trapezoid(IR + IS, t)) * 100
+    yplot = np.append(yplot, FR)
+    y_revenue = np.append(y_revenue, Revenue)
 
-    FR_all.append(FR)
-    Rev_all.append(Revenue)
-
-densities = np.array(densities)
-FR_all = np.array(FR_all)
-Rev_all = np.array(Rev_all)
-
-# Keep last ODE solution for the dynamics plot
-S_last, IS_last, IR_last, R_last, D_last, N_last = res.T
-
-datapoints = np.array([FR_all, Rev_all])
-pareto_data = np.array([-FR_all, Rev_all])
+yamr_norm = (yplot - yplot.min()) / (yplot.max() - yplot.min())
+yrev_norm = (y_revenue - y_revenue.min()) / (y_revenue.max() - y_revenue.min())
+y_final = yamr_norm - yrev_norm
+index_of = np.where(y_final == y_final.min())
+datapoints = np.array([yplot, y_revenue])
+pareto_data = np.array([-yplot, y_revenue])
 pareto = oapackage.ParetoDoubleLong()
 
 for ii in range(0, pareto_data.shape[1]):
@@ -91,39 +93,51 @@ pareto.show(verbose=1)
 lst = pareto.allindices()
 optimal_datapoints = datapoints[:, lst]
 
-kl = KneeLocator(datapoints[0, :], datapoints[1, :], curve="convex", direction="increasing")
-print(kl.knee, kl.knee_y)
-plt.subplot(2,2, 1)
-plt.plot(densities, FR_all, color='#c0392b', linewidth=1.8)
-plt.xlabel('Stocking Density (animals/m²)')
-plt.ylabel('Resistant strains (%)')
-plt.grid(True, alpha=0.3)
+sorted_idx = np.argsort(optimal_datapoints[0, :])
+pareto_x = optimal_datapoints[0, sorted_idx]
+pareto_y = optimal_datapoints[1, sorted_idx]
+ki = KneeLocator(pareto_x, pareto_y)
+print(f"Knee point — FR: {ki.knee:.2f}%, Revenue: {ki.knee_y:.2f}€")
+knee_density_idx = np.where(y_revenue == ki.knee_y)[0]
+print("Knee point density: ", xplot[knee_density_idx])
 
+print(D[-1])
+print(trapezoid(IR, t))
+print(trapezoid(IS, t))
+print(IR[-1])
+plt.subplot(2, 2, 1)
+plt.plot(xplot, yplot)
+plt.title('AMR')
 
-plt.subplot(2,2,2)
-plt.plot(densities, Rev_all)
-plt.xlabel('Stocking Density (animals/m²)')
-plt.ylabel('Revenue (€ thousands)')
-plt.grid(True, alpha=0.3)
+plt.xlabel('Density')
+plt.ylabel('Resistant animals (%)')
+plt.grid(True)
 
-plt.subplot(2,2, 3)
+plt.subplot(2, 2, 2)
+plt.plot(xplot, y_revenue)
+plt.title('Revenue')
+plt.xlabel('Density')
+plt.ylabel('Revenue (€)')
+plt.grid(True)
+plt.subplot(2,2,3)
 
 plt.plot(datapoints[0, :], datapoints[1, :], ".b", label="Non Pareto")
 plt.plot(optimal_datapoints[0, :], optimal_datapoints[1, :], ".r", label="Pareto")
-plt.plot(kl.knee, kl.knee_y, ".y", label="Knee")
+#plt.plot(ki.knee, ki.knee_y, ".g", label="Knee")
+plt.title('Pareto plot')
+plt.xlabel('FR')
+plt.ylabel('Revenue')
 plt.legend()
+plt.grid(True)
 
-
-
-plt.subplot(2, 2, 4)
-plt.plot(t, S_last, label='Susceptible')
-plt.plot(t, IS_last, label='Infected (sensitive)')
-plt.plot(t, IR_last, label='Infected (resistant)')
-plt.plot(t, R_last, label='Recovered')
-plt.plot(t, D_last, label='Dead')
-plt.xlabel('Time (days)')
-plt.ylabel('Number of birds')
-plt.legend(fontsize=8)
-plt.grid(True, alpha=0.3)
+plt.subplot(2,2,4)
+plt.plot(t, S, label="Susceptible")
+plt.plot(t, IS, label="Infected w/ susceptible strain")
+plt.plot(t, IR, label="IR w/ resistant strain")
+plt.plot(t, R, label="Recovered")
+plt.plot(t, D, label="Diseased")
+plt.legend()
+plt.grid(True)
 
 plt.show()
+
