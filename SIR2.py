@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import oapackage
 from kneed import KneeLocator
 
+
 kv = 0.2
 epson = 0.125 # The probability of de novo resistance development
 gamma = 0.143 # The rate of normal recovery
@@ -14,14 +15,15 @@ average_expenditure = 2.42 # Cost of maintenance animals per day per animal
 antibiotic_cost = 0.074 # cost of antibiotic per day per chicken
 W = 18.14 # Average weight of a healthy weaner
 P = 6.08 #Price per kg of final chicken
-WlossR = 0.0833
-WlossI = 0.189
+
+Wloss = 0.189
+sigma = Wloss * gamma * W
 p = 0.008
 day_max = 31
 IS0_relative = 0.162
 IR0_relative = 0.018
 density_min = 0.5
-density_max = 2.85
+density_max = 3
 A = 874.12 #Average size of farm in square meters
 
 densities = np.linspace(density_min, density_max, 1000)
@@ -68,12 +70,13 @@ for density in densities:
     S, IS, IR, R, D, N = result.T
     antibiotic_active = (D/N0 > p) & (day_max >= t)
     gross_revenue = N[-1] * P * W
-    weight_loss = WlossI * (IS[-1] + IR[-1]) * W + WlossR * W * R[-1]
     maintenance = trapezoid(N, t) * average_expenditure
     antibiotic = trapezoid(N * antibiotic_active, t) * antibiotic_cost
+    rec_rate = np.where(antibiotic_active == False, gamma / (gamma + mu), (gamma_a * (IS / (IS + IR)) + gamma * (IR / (IR + IS))) / (gamma_a * (IS / (IS + IR)) + gamma * (IR / (IR + IS)) + mu))
+    weight_loss = trapezoid((IR + IS) * rec_rate * sigma, t)
     Revenue = gross_revenue - weight_loss * P - maintenance - antibiotic
     xplot = np.append(xplot, density)
-    FR = (trapezoid(IR, t)/ trapezoid(IR + IS, t)) * 100
+    FR = (trapezoid(IR, t)/ trapezoid(N, t)) * 100
     yplot = np.append(yplot, FR)
     y_revenue = np.append(y_revenue, Revenue)
 

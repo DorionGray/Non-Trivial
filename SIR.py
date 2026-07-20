@@ -9,19 +9,20 @@ epson = 0.0667 # The probability of de novo resistance development
 gamma = 0.167 # The rate of normal recovery
 gamma_a = 0.379 # The rate of recovery with antibiotics (only works in sensitive strains)
 mu = 0.035 # Rate of mortality due to disease
+
 alpha = 0.5 # Fitness cost
-average_expenditure = 0.0071 # Cost of maintenance animals per day per animal
+average_expenditure = 0.0153 # Cost of maintenance animals per day per animal
 antibiotic_cost = 0.0019 # cost of antibiotic per day per chicken
-W = 2.9647 # Average weight of a healthy chicken
+W = 2.406 # Average weight of a healthy chicken
 P = 0.83 #Price per kg of final chicken
-WlossR = 0.1326
-WlossI = 0.2080
+Wloss = 0.1389
+sigma = gamma * Wloss * W
 p = 0.02
 day_max = 35
 IS0_relative = 0.05452
 IR0_relative = 0.00348
 density_min = 5
-density_max = 21
+density_max = 13.18
 A = 1996.4 #Average size of farm in square meters
 
 densities = np.linspace(density_min, density_max, 1000)
@@ -66,10 +67,11 @@ for density in densities:
     antibiotic_active = (D/N0 > p) & (day_max >= t)
     W_N = W - density * 0.0267
     gross_revenue = N[-1] * P * W_N
-    weight_loss = WlossI * (IS[-1] + IR[-1]) * W_N + WlossR * W_N * R[-1]
+    rec_rate = np.where(antibiotic_active == False, gamma/(gamma + mu), (gamma_a * (IS/(IS + IR)) + gamma * (IR/(IR + IS)))/ (gamma_a * (IS/(IS + IR)) + gamma * (IR/(IR + IS)) + mu))
+    weight_loss_cost = trapezoid((IR + IS) * rec_rate, t) * sigma
     maintenance = trapezoid(N, t) * average_expenditure
     antibiotic = trapezoid(N * antibiotic_active, t) * antibiotic_cost
-    Revenue = gross_revenue - weight_loss * P - maintenance - antibiotic
+    Revenue = gross_revenue - weight_loss_cost * P - maintenance - antibiotic
     xplot = np.append(xplot, density)
     FR = (trapezoid(IR, t)/ trapezoid(N, t)) * 100
     yplot = np.append(yplot, (trapezoid(IR, t)/ trapezoid(IR + IS, t) * 100))
@@ -98,15 +100,8 @@ print(D[-1])
 print(trapezoid(IR, t))
 print(trapezoid(IS, t))
 print(IR[-1])
-plt.subplot(3, 2, 1)
-plt.plot(xplot, yplot)
-plt.title('AMR')
 
-plt.xlabel('Density')
-plt.ylabel('Resistant strains (%)')
-plt.grid(True)
-
-plt.subplot(3, 2, 2)
+plt.subplot(2, 2, 1)
 plt.plot(xplot, yplot2)
 plt.title('AMR')
 
@@ -114,15 +109,14 @@ plt.xlabel('Density')
 plt.ylabel('Resistant animals (%)')
 plt.grid(True)
 
-plt.subplot(3, 2, 3)
+plt.subplot(2, 2, 2)
 plt.plot(xplot, y_revenue)
 plt.title('Revenue')
 plt.xlabel('Density')
 plt.ylabel('Revenue (€)')
-plt.plot(xplot, np.gradient(y_revenue, xplot))
 plt.grid(True)
 
-plt.subplot(3,2,4)
+plt.subplot(2,2,3)
 
 plt.plot(datapoints[0, :], datapoints[1, :], ".b", label="Non Pareto")
 plt.plot(optimal_datapoints[0, :], optimal_datapoints[1, :], ".r", label="Pareto")
@@ -133,7 +127,7 @@ plt.ylabel('Revenue')
 plt.legend()
 plt.grid(True)
 
-plt.subplot(3,2,5)
+plt.subplot(2,2,4)
 plt.plot(t, S, label="S")
 plt.plot(t, IS, label="IS")
 plt.plot(t, IR, label="IR")

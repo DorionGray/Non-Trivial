@@ -17,14 +17,13 @@ PARAM_RANGES = {
 }
 
 A            = 874.14
-DENSITY_SA   = 2.304
+DENSITY_SA   = 1.01
 DAYS         = 35
 p            = 0.0008
 day_max      = 31
 W            = 18.14
 PRICE        = 6.08
-WLOSS_R      = 0.0833
-WLOSS_I      = 0.189
+WLOSS        = 0.189
 C_MAINT      = 2.42
 C_ANTIBIOTIC = 0.075
 
@@ -68,24 +67,31 @@ def run_model(params, density):
 
     cum_IR = np.trapezoid(IR, t)
     cum_N = np.trapezoid(N, t)
+    cum_IS = np.trapezoid(IS, t)
     F_R    = cum_IR / cum_N if (cum_N) > 0 else 0.0
+    P_R = cum_IR / (cum_IR + cum_IS) if (cum_IR + cum_IS) > 0 else 0.0
 
-    alive = S[-1] + IS[-1] + IR[-1] + R[-1]
-    gross = alive * W * PRICE
-    WRC   = (R[-1] * WLOSS_R + (IS[-1] + IR[-1]) * WLOSS_I) * W * PRICE
-    N_traj        = S + IS + IR + R
-    MC            = np.trapezoid(N_traj, t) * C_MAINT
-    treated_mask  = (D >= p * N0) & (t <= day_max)
-    AC            = np.trapezoid(N_traj * treated_mask, t) * C_ANTIBIOTIC
-    revenue       = gross - WRC - MC - AC
+    antibiotic_active = (D / N0 > p) & (day_max >= t)
+    gross       = N[-1] * PRICE * W
+    MC          = np.trapezoid(N, t) * C_MAINT
+    AC          = np.trapezoid(N * antibiotic_active, t) * C_ANTIBIOTIC
+    rec_rate    = np.where(
+        ~antibiotic_active,
+        gamma / (gamma + mu),
+        (gamma_T * (IS / (IS + IR)) + gamma * (IR / (IS + IR)))
+        / (gamma_T * (IS / (IS + IR)) + gamma * (IR / (IS + IR)) + mu),
+    )
+    sigma       = WLOSS * gamma * W
+    weight_loss = np.trapezoid((IR + IS) * rec_rate * sigma, t)
+    revenue     = gross - weight_loss * PRICE - MC - AC
 
-    return F_R, revenue
+    return F_R, revenue, P_R, D[-1], cum_IR, cum_IS, IR[-1]
 
 
 def find_knee(params, densities):
     frs, revs = [], []
     for d in densities:
-        fr, rev = run_model(params, d)
+        fr, rev, *_ = run_model(params, d)
         frs.append(fr * 100)
         revs.append(rev)
     frs  = np.array(frs)
@@ -126,17 +132,23 @@ def draw_lhs(n_samples, seed=0):
 
 
 def evaluate(names, sample, density):
-    FR  = np.empty(len(sample))
-    REV = np.empty(len(sample))
+    FR       = np.empty(len(sample))
+    REV      = np.empty(len(sample))
+    PR       = np.empty(len(sample))
+    MORT     = np.empty(len(sample))
+    CUM_IR   = np.empty(len(sample))
+    CUM_IS   = np.empty(len(sample))
+    IR_FINAL = np.empty(len(sample))
     for i, row in enumerate(sample):
-        FR[i], REV[i] = run_model(dict(zip(names, row)), density)
-    return FR, REV
+        (FR[i], REV[i], PR[i], MORT[i],
+         CUM_IR[i], CUM_IS[i], IR_FINAL[i]) = run_model(dict(zip(names, row)), density)
+    return FR, REV, PR, MORT, CUM_IR, CUM_IS, IR_FINAL
 
 
-def uncertainty_report(FR, REV):
-    for label, y in [("FR", FR), ("revenue", REV)]:
+def uncertainty_report(**series):
+    for label, y in series.items():
         lo, med, hi = np.percentile(y, [2.5, 50, 97.5])
-        print(f"{label:>8}:  median={med:,.4g}   "
+        print(f"{label:>14}:  median={med:,.4g}   "
               f"95% band=[{lo:,.4g}, {hi:,.4g}]   "
               f"mean={np.mean(y):,.4g}   sd={np.std(y):,.4g}")
 
@@ -230,10 +242,11 @@ def knee_uncertainty_report(knee_d):
 
 if __name__ == "__main__":
     names, sample = draw_lhs(N_SIM, seed=0)
-    FR, REV = evaluate(names, sample, DENSITY_SA)
+    FR, REV, PR, MORT, CUM_IR, CUM_IS, IR_FINAL = evaluate(names, sample, DENSITY_SA)
 
     print(f"Uncertainty analysis at density {DENSITY_SA}")
-    uncertainty_report(FR, REV)
+    uncertainty_report(FR=FR, revenue=REV, PR=PR, final_mortality=MORT,
+                        cum_IR=CUM_IR, cum_IS=CUM_IS, final_IR=IR_FINAL)
 
     pr_fr,  _ = sensitivity_report(names, sample, FR,  "F_R")
     pr_rev, _ = sensitivity_report(names, sample, REV, "revenue")
